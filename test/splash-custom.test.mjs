@@ -26,7 +26,7 @@ globalThis.localStorage = {
 
 const { __test: t } = await import(pathToFileURL(path.join(extDir, 'index.js')).href);
 
-assert.equal(t.VERSION, '1.0.0');
+assert.equal(t.VERSION, '1.0.1');
 assert.equal(t.MODULE_NAME, 'splash-custom');
 assert.equal(t.clampNumber(999, 150, 16, 800), 800);
 assert.equal(t.clampNumber(-1, 150, 16, 800), 16);
@@ -40,8 +40,26 @@ assert.equal(
     t.resolveImageSrc({ imageData: 'data:image/gif;base64,AAA', imageUrl: 'https://x/y.png' }),
     'data:image/gif;base64,AAA',
 );
-assert.equal(t.resolveImageSrc({ imageData: '', imageUrl: 'https://cdn.example/a.gif' }), 'https://cdn.example/a.gif');
+// 1.0.1 : plus d'URL distante — seule la data URL importée compte
+assert.equal(t.resolveImageSrc({ imageData: '', imageUrl: 'https://cdn.example/a.gif' }), t.DEFAULT_LOGO);
+assert.equal(t.resolveImageSrc({ imageData: 'https://cdn.example/a.gif' }), t.DEFAULT_LOGO);
 assert.equal(t.resolveImageSrc({ imageData: '', imageUrl: '' }), t.DEFAULT_LOGO);
+assert.equal(t.FILE_ACCEPT, 'image/*,image/gif');
+assert.equal(t.isImageDataUrl('data:image/png;base64,AAA'), true);
+assert.equal(t.isImageDataUrl('data:text/html,<b>'), false);
+assert.equal(t.isImageDataUrl('javascript:alert(1)'), false);
+assert.equal(t.isImageFile({ type: 'image/jpeg', name: 'IMG_0001.JPG' }), true);
+assert.equal(t.isImageFile({ type: '', name: 'IMG_0002.HEIC' }), true);
+assert.equal(t.isImageFile({ type: 'text/plain', name: 'x.gif' }), false);
+assert.equal(t.isGifFile({ type: 'image/gif', name: 'a' }), true);
+assert.equal(t.isGifFile({ type: '', name: 'anim.GIF' }), true);
+// Migration 1.0.0 : ancienne URL data:image → imageData ; https ignorée ; champ imageUrl supprimé
+assert.equal(t.sanitize({ imageUrl: 'data:image/gif;base64,R0l' }).imageData, 'data:image/gif;base64,R0l');
+assert.equal(t.sanitize({ imageUrl: 'https://x/y.png' }).imageData, '');
+assert.equal('imageUrl' in t.sanitize({ imageUrl: 'https://x/y.png' }), false);
+assert.equal('imageUrl' in t.defaultSettings, false);
+assert.equal(t.sanitize({ imageData: 'data:image/png;base64,A', imageName: 'a.png' }).imageName, 'a.png');
+assert.equal(t.sanitize({ imageData: '', imageName: 'a.png' }).imageName, '');
 assert.equal(t.sanitize({}).enabled, true);
 assert.equal(t.sanitize({}).hideSpinner, true);
 assert.equal(t.sanitize({ previewSeconds: 99 }).previewSeconds, 5);
@@ -52,7 +70,7 @@ assert.equal(t.defaultSettings.bgColor, '#000000');
 assert.ok(t.MAX_UPLOAD_BYTES >= 500_000 && t.MAX_UPLOAD_BYTES <= 3_000_000);
 
 const manifest = JSON.parse(fs.readFileSync(path.join(here, '../manifest.json'), 'utf8'));
-assert.equal(manifest.version, '1.0.0');
+assert.equal(manifest.version, '1.0.1');
 assert.equal(manifest.loading_order, 1);
 assert.equal(manifest.css, 'style.css');
 assert.equal(manifest.js, 'index.js');

@@ -1,6 +1,10 @@
 /**
- * Splash Custom 1.0.0 — extension SillyTavern
+ * Splash Custom 1.0.1 — extension SillyTavern
  * Personnalise l'écran de lancement (logo ST / GIF, fond, texte « Initialisation… »).
+ *
+ * 1.0.1 : plus de champ URL — l'image / le GIF s'importe directement depuis la galerie
+ * (input file accept="image/*,image/gif", sans `capture` → iOS Safari propose la Photothèque),
+ * et est stockée en data URL dans extensionSettings.
  *
  * Le splash disparaît vite : style.css est déclaré dans le manifest (chargé tôt, loading_order: 1),
  * un cache localStorage permet d'appliquer les variables CSS dès le chargement du module,
@@ -21,16 +25,20 @@ const STYLE_ID = 'sc-runtime-style';
 const PREVIEW_ID = 'sc-preview-overlay';
 const PANEL_ID = 'splash_custom_settings';
 const SCHEMA = 1;
-const VERSION = '1.0.0';
+const VERSION = '1.0.1';
 const MAX_UPLOAD_BYTES = 1_800_000; // ~1.8 Mo (data URL dans extensionSettings)
+const MAX_SOURCE_BYTES = 25_000_000; // photo galerie brute acceptée avant redimensionnement
+const MAX_DIMENSION = 1024; // px — les images fixes trop lourdes sont réduites (pas les GIF)
+const FILE_ACCEPT = 'image/*,image/gif';
+const IMAGE_EXT_RE = /\.(png|jpe?g|gif|webp|avif|heic|heif|bmp|svg)$/i;
 const DEFAULT_LOGO = '/img/logo.png';
 const HEX_RE = /^#[0-9a-f]{6}$/i;
 
 const defaultSettings = Object.freeze({
     schema: SCHEMA,
     enabled: true,
-    imageUrl: '',
-    imageData: '', // data:image/... depuis upload fichier
+    imageData: '', // data:image/... depuis upload fichier (galerie)
+    imageName: '', // nom du fichier importé (affichage)
     bgColor: '#000000',
     hideText: false,
     textLabel: 'Initialisation...',
@@ -68,12 +76,26 @@ function sizeCss(size, unit) {
     return `${n}${u}`;
 }
 
-/** Source image effective : data URL uploadée > URL https/http/data > logo ST par défaut. */
+function isImageDataUrl(v) {
+    return typeof v === 'string' && /^data:image\/[a-z0-9.+-]+[;,]/i.test(v.trim());
+}
+
+/** Fichier accepté comme image (type MIME image/* ou extension connue — iOS peut laisser type vide). */
+function isImageFile(file) {
+    if (!file) return false;
+    const type = String(file.type || '');
+    if (/^image\//i.test(type)) return true;
+    return !type && IMAGE_EXT_RE.test(String(file.name || ''));
+}
+
+function isGifFile(file) {
+    return !!file && (/^image\/gif$/i.test(String(file.type || '')) || /\.gif$/i.test(String(file.name || '')));
+}
+
+/** Source image effective : data URL importée (galerie) > logo ST par défaut. Aucune URL distante. */
 function resolveImageSrc(s) {
-    const data = typeof s.imageData === 'string' ? s.imageData.trim() : '';
-    if (data.startsWith('data:image/')) return data;
-    const url = typeof s.imageUrl === 'string' ? s.imageUrl.trim() : '';
-    if (/^(https?:|data:image\/)/i.test(url)) return url;
+    const data = s && typeof s.imageData === 'string' ? s.imageData.trim() : '';
+    if (isImageDataUrl(data)) return data;
     return DEFAULT_LOGO;
 }
 
@@ -81,11 +103,15 @@ function sanitize(src) {
     const d = defaultSettings;
     const o = (src && typeof src === 'object') ? src : {};
     const unit = o.imageSizeUnit === '%' ? '%' : 'px';
+    // Migration 1.0.0 → 1.0.1 : une ancienne « URL » de type data:image devient imageData ;
+    // les URL http(s) ne sont plus supportées (champ retiré).
+    let imageData = isImageDataUrl(o.imageData) ? o.imageData.trim() : '';
+    if (!imageData && isImageDataUrl(o.imageUrl)) imageData = o.imageUrl.trim();
     return {
         schema: SCHEMA,
         enabled: o.enabled !== false,
-        imageUrl: typeof o.imageUrl === 'string' ? o.imageUrl.trim() : '',
-        imageData: typeof o.imageData === 'string' ? o.imageData : '',
+        imageData,
+        imageName: imageData && typeof o.imageName === 'string' ? o.imageName.slice(0, 120) : '',
         bgColor: normalizeHex(o.bgColor, d.bgColor),
         hideText: !!o.hideText,
         textLabel: typeof o.textLabel === 'string' && o.textLabel.length ? o.textLabel.slice(0, 120) : d.textLabel,
@@ -251,11 +277,13 @@ function getSettings() {
     }
     const cleaned = sanitize(extension_settings[MODULE_NAME]);
     Object.assign(extension_settings[MODULE_NAME], cleaned);
+    delete extension_settings[MODULE_NAME].imageUrl; // champ URL retiré en 1.0.1
     return extension_settings[MODULE_NAME];
 }
 
 function persist(s) {
     Object.assign(extension_settings[MODULE_NAME], sanitize(s));
+    delete extension_settings[MODULE_NAME].imageUrl;
     writeCache(extension_settings[MODULE_NAME]);
     observedSettings = extension_settings[MODULE_NAME];
     try { saveSettingsDebounced(); } catch (e) { console.warn(LOG, 'saveSettingsDebounced', e); }
@@ -268,6 +296,7 @@ function reapply() {
     observedSettings = s;
     if (s.enabled) startObserver(s);
     else stopObserver();
+    syncUi();
     return s;
 }
 
@@ -339,18 +368,15 @@ function buildSettingsHtml() {
             <hr />
             <div class="sc-block">
                 <b>Image / GIF</b>
-                <p class="sc-hint">URL https (ou data URL), ou fichier local (stocké dans les réglages de l'extension). GIF animés acceptés.</p>
-                <div class="sc-row">
-                    <label for="sc_image_url">URL</label>
-                    <input type="url" id="sc_image_url" class="text_pole" placeholder="https://…/mon-logo.png ou .gif" />
-                </div>
-                <div class="sc-row">
-                    <label for="sc_image_file">Fichier</label>
-                    <input type="file" id="sc_image_file" accept="image/*,.gif" />
-                </div>
-                <div class="sc-row">
+                <p class="sc-hint">Choisis une image ou un GIF animé depuis ta galerie / tes fichiers. Elle est stockée directement dans les réglages de l'extension (aucun lien à coller). Les grosses photos sont réduites automatiquement ; GIF max ~${Math.round(MAX_UPLOAD_BYTES / 1e5) / 10} Mo.</p>
+                <div class="sc-row sc-upload-row">
+                    <input type="file" id="sc_image_file" class="sc-file-input" accept="${FILE_ACCEPT}" />
+                    <label for="sc_image_file" id="sc_pick_label" class="menu_button sc-pick" role="button" tabindex="0">
+                        <i class="fa-solid fa-images"></i> Choisir dans la galerie
+                    </label>
                     <button type="button" id="sc_clear_image" class="menu_button">Effacer l'image</button>
                 </div>
+                <div id="sc_image_status" class="sc-hint" aria-live="polite"></div>
                 <img id="sc_thumb" class="sc-preview-thumb" alt="Aperçu image" />
             </div>
 
@@ -415,18 +441,93 @@ function buildSettingsHtml() {
 </div>`;
 }
 
+function formatKb(chars) {
+    // Taille approximative du binaire encodé en base64
+    return `${Math.max(1, Math.round((chars * 3) / 4 / 1024))} Ko`;
+}
+
 function updateThumb(s) {
     const $ = globalThis.jQuery;
     if (!$) return;
     const src = resolveImageSrc(s);
     const $img = $('#sc_thumb');
-    if (src && src !== DEFAULT_LOGO) {
-        $img.attr('src', src).addClass('sc-show');
-    } else if (s.imageUrl || s.imageData) {
-        $img.attr('src', src).addClass('sc-show');
+    const $status = $('#sc_image_status');
+    if (src !== DEFAULT_LOGO) {
+        if ($img.attr('src') !== src) $img.attr('src', src);
+        $img.addClass('sc-show');
+        const name = s.imageName ? `« ${s.imageName} »` : 'Image importée';
+        $status.text(`${name} — ${formatKb(src.length)}`);
     } else {
         $img.removeClass('sc-show').removeAttr('src');
+        $status.text('Aucune image : logo SillyTavern par défaut.');
     }
+}
+
+function loadImage(src) {
+    return new Promise((resolve, reject) => {
+        const img = new Image();
+        img.onload = () => resolve(img);
+        img.onerror = () => reject(new Error('image illisible'));
+        img.src = src;
+    });
+}
+
+function readAsDataUrl(file) {
+    return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(String(reader.result || ''));
+        reader.onerror = () => reject(reader.error || new Error('lecture impossible'));
+        reader.readAsDataURL(file);
+    });
+}
+
+/**
+ * Lit un fichier de la galerie et renvoie une data URL image prête à stocker.
+ * - GIF : conservé tel quel (animation), refusé au-delà de MAX_UPLOAD_BYTES.
+ * - Autres : conservés si légers, sinon réduits à MAX_DIMENSION px (canvas → JPEG/PNG).
+ */
+async function fileToStoredDataUrl(file) {
+    if (!isImageFile(file)) throw new Error('Fichier image requis (PNG, JPG, GIF, WebP…).');
+    if (isGifFile(file)) {
+        if (file.size > MAX_UPLOAD_BYTES) {
+            throw new Error(`GIF trop volumineux (max ~${Math.round(MAX_UPLOAD_BYTES / 1e5) / 10} Mo).`);
+        }
+        let data = await readAsDataUrl(file);
+        if (data.startsWith('data:application/octet-stream') || data.startsWith('data:;')) {
+            data = data.replace(/^data:[^;,]*/, 'data:image/gif');
+        }
+        if (!isImageDataUrl(data)) throw new Error('Lecture du fichier impossible.');
+        return data;
+    }
+    if (file.size > MAX_SOURCE_BYTES) throw new Error('Fichier trop volumineux.');
+    let data = await readAsDataUrl(file);
+    if (!isImageDataUrl(data)) {
+        const ext = (String(file.name || '').match(IMAGE_EXT_RE) || [])[1] || 'png';
+        const mime = ext.toLowerCase() === 'jpg' ? 'jpeg' : ext.toLowerCase() === 'svg' ? 'svg+xml' : ext.toLowerCase();
+        data = data.replace(/^data:[^;,]*/, `data:image/${mime}`);
+    }
+    if (!isImageDataUrl(data)) throw new Error('Lecture du fichier impossible.');
+    let img = null;
+    try { img = await loadImage(data); } catch { /* format non décodable : on garde tel quel si léger */ }
+    const tooBig = data.length > MAX_UPLOAD_BYTES;
+    const tooLarge = img && Math.max(img.naturalWidth, img.naturalHeight) > MAX_DIMENSION;
+    if (!img || (!tooBig && !tooLarge) || /^data:image\/svg/i.test(data)) {
+        if (tooBig) throw new Error('Image trop volumineuse.');
+        return data;
+    }
+    const ratio = Math.min(1, MAX_DIMENSION / Math.max(img.naturalWidth, img.naturalHeight));
+    const w = Math.max(1, Math.round(img.naturalWidth * ratio));
+    const h = Math.max(1, Math.round(img.naturalHeight * ratio));
+    const canvas = document.createElement('canvas');
+    canvas.width = w;
+    canvas.height = h;
+    canvas.getContext('2d').drawImage(img, 0, 0, w, h);
+    const keepAlpha = /^image\/(png|webp|avif)$/i.test(file.type || '');
+    let out = keepAlpha ? canvas.toDataURL('image/png') : '';
+    if (!out || out.length > MAX_UPLOAD_BYTES) out = canvas.toDataURL('image/jpeg', 0.85);
+    if (out.length > MAX_UPLOAD_BYTES) out = canvas.toDataURL('image/jpeg', 0.6);
+    if (!isImageDataUrl(out) || out.length > MAX_UPLOAD_BYTES) throw new Error('Image trop volumineuse même réduite.');
+    return out;
 }
 
 function syncUi() {
@@ -434,7 +535,6 @@ function syncUi() {
     if (!$ || !$(`#${PANEL_ID}`).length) return;
     const s = getSettings();
     $('#sc_enabled').prop('checked', s.enabled);
-    $('#sc_image_url').val(s.imageUrl);
     $('#sc_image_size').val(s.imageSize);
     $('#sc_image_unit').val(s.imageSizeUnit);
     $('#sc_bg').val(s.bgColor);
@@ -466,7 +566,6 @@ function bindUi() {
     };
 
     $('#sc_enabled').on('change', function () { change({ enabled: !!$(this).prop('checked') }); });
-    $('#sc_image_url').on('change input', function () { change({ imageUrl: String($(this).val() || '') }); });
     $('#sc_image_size').on('change input', function () { change({ imageSize: Number($(this).val()) }); });
     $('#sc_image_unit').on('change', function () { change({ imageSizeUnit: $(this).val() === '%' ? '%' : 'px' }); });
     $('#sc_bg').on('input change', function () { change({ bgColor: $(this).val() }); });
@@ -479,33 +578,34 @@ function bindUi() {
     $('#sc_preview_sec').on('change input', function () { change({ previewSeconds: Number($(this).val()) }); });
 
     $('#sc_clear_image').on('click', () => {
-        change({ imageUrl: '', imageData: '' });
+        change({ imageData: '', imageName: '' });
         $('#sc_image_file').val('');
     });
 
-    $('#sc_image_file').on('change', function () {
-        const file = this.files && this.files[0];
+    // Clavier : Entrée / Espace sur le bouton-label ouvre le sélecteur (le tap/clic passe nativement par <label for>).
+    $('#sc_pick_label').on('keydown', function (ev) {
+        if (ev.key === 'Enter' || ev.key === ' ') {
+            ev.preventDefault();
+            document.getElementById('sc_image_file')?.click();
+        }
+    });
+
+    $('#sc_image_file').on('change', async function () {
+        const input = this;
+        const file = input.files && input.files[0];
         if (!file) return;
-        if (!/^image\//i.test(file.type) && !/\.gif$/i.test(file.name)) {
-            toastr?.warning?.('Fichier image requis (PNG, JPG, GIF, WebP…).');
-            return;
-        }
-        if (file.size > MAX_UPLOAD_BYTES) {
-            toastr?.warning?.(`Fichier trop volumineux (max ~${Math.round(MAX_UPLOAD_BYTES / 1e6)} Mo). Utilisez une URL.`);
-            return;
-        }
-        const reader = new FileReader();
-        reader.onload = () => {
-            const data = String(reader.result || '');
-            if (!data.startsWith('data:image/')) {
-                toastr?.error?.('Lecture du fichier impossible.');
-                return;
-            }
-            change({ imageData: data, imageUrl: '' });
+        $('#sc_image_status').text('Import en cours…');
+        try {
+            const data = await fileToStoredDataUrl(file);
+            change({ imageData: data, imageName: String(file.name || 'image').slice(0, 120) });
             toastr?.success?.('Image enregistrée dans les réglages.');
-        };
-        reader.onerror = () => toastr?.error?.('Erreur de lecture du fichier.');
-        reader.readAsDataURL(file);
+        } catch (e) {
+            console.warn(LOG, 'upload', e);
+            toastr?.warning?.(e?.message || 'Erreur de lecture du fichier.');
+            updateThumb(getSettings());
+        } finally {
+            input.value = ''; // permet de re-sélectionner le même fichier
+        }
     });
 
     $('#sc_preview_btn').on('click', () => {
@@ -586,6 +686,7 @@ globalThis.SplashCustom = {
     hidePreview,
     resolveImageSrc,
     sanitize,
+    fileToStoredDataUrl,
     VERSION,
 };
 
@@ -595,7 +696,11 @@ export const __test = {
     sizeCss,
     resolveImageSrc,
     sanitize,
+    isImageDataUrl,
+    isImageFile,
+    isGifFile,
     defaultSettings,
+    FILE_ACCEPT,
     MODULE_NAME,
     CACHE_KEY,
     MAX_UPLOAD_BYTES,

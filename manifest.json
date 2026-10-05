@@ -6,9 +6,9 @@
     "js": "index.js",
     "css": "style.css",
     "author": "hydravnss",
-    "version": "1.0.0",
+    "version": "1.0.1",
     "homePage": "https://github.com/hydravnss/splash-custom",
     "minimum_client_version": "1.12.0",
     "auto_update": true,
-    "description": "FR: Personnalise l'écran de lancement SillyTavern (logo / GIF, fond, texte « Initialisation… »). EN: Customize the SillyTavern splash screen (logo/GIF, background, init text)."
+    "description": "FR: Personnalise l'écran de lancement SillyTavern (logo / GIF importé depuis la galerie, fond, texte « Initialisation… »). EN: Customize the SillyTavern splash screen (logo/GIF uploaded from gallery, background, init text)."
 }

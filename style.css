@@ -15,7 +15,6 @@
 }
 #splash_custom_settings .sc-row label { min-width: 9em; }
 #splash_custom_settings .sc-row input[type="text"],
-#splash_custom_settings .sc-row input[type="url"],
 #splash_custom_settings .sc-row input[type="number"] {
     flex: 1 1 140px;
     min-width: 0;
@@ -28,6 +27,37 @@
     background: transparent;
     cursor: pointer;
 }
+/* Input file visuellement masqué (PAS display:none : iOS Safari doit pouvoir l'ouvrir via <label for>). */
+#splash_custom_settings .sc-file-input {
+    display: block !important; /* ST met input[type=file] en display:none globalement */
+    position: absolute !important;
+    width: 1px !important;
+    height: 1px !important;
+    padding: 0 !important;
+    margin: -1px !important;
+    overflow: hidden !important;
+    clip: rect(0 0 0 0) !important;
+    clip-path: inset(50%) !important;
+    white-space: nowrap !important;
+    border: 0 !important;
+    opacity: 0 !important;
+}
+#splash_custom_settings .sc-upload-row { position: relative; }
+#splash_custom_settings #sc_clear_image { white-space: nowrap; width: auto; }
+#splash_custom_settings .sc-pick {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    cursor: pointer;
+    min-width: 0 !important;
+    width: auto !important;
+    white-space: nowrap;
+    flex: 0 0 auto;
+    padding: 6px 12px;
+    -webkit-tap-highlight-color: transparent;
+    touch-action: manipulation;
+}
+#splash_custom_settings .sc-file-input:focus-visible + .sc-pick { outline: 2px solid currentColor; outline-offset: 2px; }
 #splash_custom_settings .sc-preview-thumb {
     max-width: 120px;
     max-height: 80px;
