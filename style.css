@@ -1,6 +1,8 @@
 /**
- * Splash Custom — styles du panneau + règles précoces (variables posées par index.js).
- * Ne touche PAS chat, form_sheld, send_textarea, ni les autres extensions.
+ * Splash Custom 1.0.2 — styles du panneau + règles précoces (variables / classes
+ * posées par index.js dès le cache localStorage). Anti-flash : html.sc-has-image
+ * masque le logo ST non patché ; #sc-boot-cover / #sc-boot-overlay affichent
+ * l'image custom. Ne touche PAS chat, form_sheld, send_textarea, ni les autres extensions.
  */
 
 /* ---------- Panneau de réglages (FR) ---------- */
@@ -96,7 +98,9 @@ html.sc-active .popup:has(#loader.splash-screen)::backdrop {
 }
 
 html.sc-active #loader.splash-screen .splash-logo,
-html.sc-active #sc-preview-overlay .splash-logo {
+html.sc-active #sc-preview-overlay .splash-logo,
+html.sc-active #sc-boot-overlay .splash-logo,
+html.sc-active #sc-boot-logo {
     width: var(--sc-size, 150px) !important;
     max-width: min(90vw, var(--sc-size, 150px)) !important;
     height: auto !important;
@@ -105,12 +109,14 @@ html.sc-active #sc-preview-overlay .splash-logo {
 }
 
 html.sc-active #loader.splash-screen .splash-message,
-html.sc-active #sc-preview-overlay .splash-message {
+html.sc-active #sc-preview-overlay .splash-message,
+html.sc-active #sc-boot-overlay .splash-message {
     color: var(--sc-text, #ffffff) !important;
 }
 
 html.sc-active.sc-hide-text #loader.splash-screen .splash-message,
-html.sc-active.sc-hide-text #sc-preview-overlay .splash-message {
+html.sc-active.sc-hide-text #sc-preview-overlay .splash-message,
+html.sc-active.sc-hide-text #sc-boot-overlay .splash-message {
     display: none !important;
 }
 

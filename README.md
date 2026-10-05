@@ -30,15 +30,25 @@ Réglages : Extensions → **Splash Custom**.
 - Le fichier est lu en data URL (`FileReader`) et enregistré dans `extensionSettings['splash-custom'].imageData` (+ `imageName`), puis mis en cache local pour le prochain splash.
 - Les URL distantes ne sont plus prises en charge : une ancienne valeur `imageUrl` de type `data:image/…` (1.0.0) est migrée, une URL `http(s)` est ignorée.
 
-## Application précoce
+## Application précoce (1.0.2 — anti-flash iPhone)
 
-Le splash disparaît vite. Pour que la personnalisation soit visible :
+SillyTavern peint le logo ST dans `firstLoadInit()` **avant** d’activer les extensions (on ne peut pas modifier `index.html`). Sur iPhone le splash peut disparaître avant que `index.js` tourne. Contre-mesures :
 
-1. `style.css` du manifest est chargé tôt (`loading_order: 1`)
-2. Cache `localStorage` (`sc_cache_v1`) appliqué dès le chargement du module
-3. `MutationObserver` sur `.splash-logo` / `.splash-message` / `#loader.splash-screen`
+1. `loading_order: 0` + `style.css` (règles `html.sc-has-image`, `#sc-boot-cover`)
+2. Cache `localStorage` (`sc_cache_v1`) lu **synchronement** au tout début du module
+3. Injection d’un `<style id="sc-boot-style">` + variables CSS (`--sc-img`, `--sc-bg`…)
+4. `MutationObserver` dès le premier tick + re-patch microtask / rAF / timeouts
+5. Couverture du logo ST (`#sc-boot-cover`) : src custom, logo ST `display:none`
+6. Si le splash ST a déjà disparu → **re-show court** (`#sc-boot-overlay`, ~1,8 s)
+7. Bloc CSS `BEGIN-SPLASH-CUSTOM-BOOT` synchronisé dans `power_user.custom_css` (appliqué par ST **avant** le JS des extensions) : masque le logo ST et affiche l’image via `::before`
 
 L’extension **ne modifie pas** `#chat`, `#form_sheld`, `#send_textarea`, ni les styles des autres extensions.
+
+### Test boot froid
+
+```bash
+node test/st-boot-playwright.mjs   # image en cache → captures splash-boot-*.png (1er frame)
+```
 
 ## Tests
 

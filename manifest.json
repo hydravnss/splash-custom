@@ -1,14 +1,14 @@
 {
     "display_name": "Splash Custom",
-    "loading_order": 1,
+    "loading_order": 0,
     "requires": [],
     "optional": [],
     "js": "index.js",
     "css": "style.css",
     "author": "hydravnss",
-    "version": "1.0.1",
+    "version": "1.0.2",
     "homePage": "https://github.com/hydravnss/splash-custom",
     "minimum_client_version": "1.12.0",
     "auto_update": true,
-    "description": "FR: Personnalise l'écran de lancement SillyTavern (logo / GIF importé depuis la galerie, fond, texte « Initialisation… »). EN: Customize the SillyTavern splash screen (logo/GIF uploaded from gallery, background, init text)."
+    "description": "FR: Personnalise l'\u00e9cran de lancement SillyTavern (logo / GIF import\u00e9 depuis la galerie, fond, texte \u00ab Initialisation\u2026 \u00bb). Anti-flash iPhone : image custom d\u00e8s le cache localStorage. EN: Customize the SillyTavern splash screen (logo/GIF from gallery, background, init text). iPhone anti-flash via localStorage early apply."
 }

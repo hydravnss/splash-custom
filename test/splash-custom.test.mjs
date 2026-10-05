@@ -26,7 +26,7 @@ globalThis.localStorage = {
 
 const { __test: t } = await import(pathToFileURL(path.join(extDir, 'index.js')).href);
 
-assert.equal(t.VERSION, '1.0.1');
+assert.equal(t.VERSION, '1.0.2');
 assert.equal(t.MODULE_NAME, 'splash-custom');
 assert.equal(t.clampNumber(999, 150, 16, 800), 800);
 assert.equal(t.clampNumber(-1, 150, 16, 800), 16);
@@ -70,8 +70,8 @@ assert.equal(t.defaultSettings.bgColor, '#000000');
 assert.ok(t.MAX_UPLOAD_BYTES >= 500_000 && t.MAX_UPLOAD_BYTES <= 3_000_000);
 
 const manifest = JSON.parse(fs.readFileSync(path.join(here, '../manifest.json'), 'utf8'));
-assert.equal(manifest.version, '1.0.1');
-assert.equal(manifest.loading_order, 1);
+assert.equal(manifest.version, '1.0.2');
+assert.equal(manifest.loading_order, 0);
 assert.equal(manifest.css, 'style.css');
 assert.equal(manifest.js, 'index.js');
 assert.equal(manifest.author, 'hydravnss');
@@ -81,6 +81,23 @@ const css = fs.readFileSync(path.join(here, '../style.css'), 'utf8');
 assert.match(css, /splash-logo/);
 assert.match(css, /#preloader/);
 assert.match(css, /#sc-preview-overlay/);
+assert.match(css, /sc-has-image/);
+assert.match(css, /#sc-boot-cover/);
+assert.match(css, /#sc-boot-overlay/);
+assert.equal(t.hasCustomImage({ enabled: true, imageData: 'data:image/png;base64,AA' }), true);
+assert.equal(t.hasCustomImage({ enabled: true, imageData: '' }), false);
+assert.equal(t.BOOT_COVER_ID, 'sc-boot-cover');
+assert.equal(t.BOOT_OVERLAY_ID, 'sc-boot-overlay');
+assert.equal(t.STYLE_ID, 'sc-boot-style');
+assert.ok(t.CSS_BOOT_BEGIN.includes('BEGIN-SPLASH-CUSTOM-BOOT'));
+assert.ok(t.CSS_BOOT_END.includes('END-SPLASH-CUSTOM-BOOT'));
+const early = t.buildEarlyCssBlock({ enabled: true, imageData: 'data:image/png;base64,AA', bgColor: '#000000', textColor: '#ffffff', imageSize: 100, imageSizeUnit: 'px', hideText: false, hideSpinner: true, textLabel: 'x' });
+assert.match(early, /BEGIN-SPLASH-CUSTOM-BOOT/);
+assert.match(early, /splash-logo/);
+assert.match(early, /::before/);
+assert.match(early, /data:image\/png;base64,AA/);
+assert.equal(t.buildEarlyCssBlock({ enabled: false, imageData: 'data:image/png;base64,AA' }), '');
+assert.equal(t.stripEarlyCssBlock('a\n' + early + '\nb').replace(/\s+/g,' ').trim(), 'a b');
 assert.doesNotMatch(css, /#chat\s*[{,]/);
 assert.doesNotMatch(css, /#form_sheld/);
 assert.doesNotMatch(css, /#send_textarea/);

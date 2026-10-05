@@ -1,14 +1,15 @@
 /**
- * Splash Custom 1.0.1 — extension SillyTavern
+ * Splash Custom 1.0.2 — extension SillyTavern
  * Personnalise l'écran de lancement (logo ST / GIF, fond, texte « Initialisation… »).
  *
- * 1.0.1 : plus de champ URL — l'image / le GIF s'importe directement depuis la galerie
- * (input file accept="image/*,image/gif", sans `capture` → iOS Safari propose la Photothèque),
- * et est stockée en data URL dans extensionSettings.
+ * 1.0.1 : upload galerie → data URL (plus de champ URL).
+ * 1.0.2 : anti-flash iPhone — apply synchrone depuis localStorage AVANT le paint du logo ST
+ * restant, style boot injecté (#sc-boot-style), couverture du logo ST, MutationObserver dès
+ * le premier tick, re-show court (#sc-boot-overlay) si le splash ST a déjà disparu.
  *
- * Le splash disparaît vite : style.css est déclaré dans le manifest (chargé tôt, loading_order: 1),
- * un cache localStorage permet d'appliquer les variables CSS dès le chargement du module,
- * et un MutationObserver rattrape `.splash-logo` / `.splash-message` / `#loader.splash-screen`.
+ * ST peint le logo dans firstLoadInit() avant d'activer les extensions : on ne peut pas
+ * modifier index.html. On maximise donc l'early apply (loading_order bas + cache + CSS +
+ * observer + re-show).
  *
  * Ne touche pas #chat, #form_sheld, #send_textarea, ni les autres extensions.
  * Vanilla ES module, aucune étape de build.
@@ -21,11 +22,17 @@ import { saveSettingsDebounced } from '../../../../script.js';
 const MODULE_NAME = 'splash-custom';
 const LOG = '[Splash Custom]';
 const CACHE_KEY = 'sc_cache_v1';
-const STYLE_ID = 'sc-runtime-style';
+const STYLE_ID = 'sc-boot-style';
 const PREVIEW_ID = 'sc-preview-overlay';
+const BOOT_OVERLAY_ID = 'sc-boot-overlay';
+const BOOT_COVER_ID = 'sc-boot-cover';
 const PANEL_ID = 'splash_custom_settings';
+const BOOT_RESHOW_MS = 1800; // re-show court si le splash ST a déjà disparu (iPhone)
+const CSS_BOOT_BEGIN = '/* BEGIN-SPLASH-CUSTOM-BOOT */';
+const CSS_BOOT_END = '/* END-SPLASH-CUSTOM-BOOT */';
+const BOOT_FILE_NAME = 'splash-custom-boot.img';
 const SCHEMA = 1;
-const VERSION = '1.0.1';
+const VERSION = '1.0.2';
 const MAX_UPLOAD_BYTES = 1_800_000; // ~1.8 Mo (data URL dans extensionSettings)
 const MAX_SOURCE_BYTES = 25_000_000; // photo galerie brute acceptée avant redimensionnement
 const MAX_DIMENSION = 1024; // px — les images fixes trop lourdes sont réduites (pas les GIF)
@@ -159,34 +166,62 @@ function writeCache(s) {
 // Application DOM / CSS
 // ---------------------------------------------------------------------------
 
+function hasCustomImage(s) {
+    return !!(s && s.enabled && isImageDataUrl(s.imageData));
+}
+
 function applyCssVars(s) {
     if (typeof document === 'undefined') return;
     const root = document.documentElement;
     if (!root) return;
     if (!s || !s.enabled) {
-        root.classList.remove('sc-active', 'sc-hide-text', 'sc-hide-spinner');
+        root.classList.remove('sc-active', 'sc-hide-text', 'sc-hide-spinner', 'sc-has-image');
         root.style.removeProperty('--sc-bg');
         root.style.removeProperty('--sc-text');
         root.style.removeProperty('--sc-size');
+        root.style.removeProperty('--sc-img');
         return;
     }
     root.classList.add('sc-active');
     root.classList.toggle('sc-hide-text', !!s.hideText);
     root.classList.toggle('sc-hide-spinner', !!s.hideSpinner);
+    root.classList.toggle('sc-has-image', hasCustomImage(s));
     root.style.setProperty('--sc-bg', s.bgColor);
     root.style.setProperty('--sc-text', s.textColor);
     root.style.setProperty('--sc-size', sizeCss(s.imageSize, s.imageSizeUnit));
+    if (hasCustomImage(s)) {
+        // URL encodée pour background-image CSS (guillemets échappés)
+        const safe = String(s.imageData).replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+        root.style.setProperty('--sc-img', `url("${safe}")`);
+    } else {
+        root.style.removeProperty('--sc-img');
+    }
 }
 
 function patchElement(el, s) {
     if (!el || !s || !s.enabled) return;
     if (el.classList && el.classList.contains('splash-logo')) {
+        // Cover / logo du re-show : gérés ailleurs
+        if (el.id === BOOT_COVER_ID || el.id === 'sc-boot-logo' || el.getAttribute('data-sc-cover') === '1') return;
         const src = resolveImageSrc(s);
+        const custom = hasCustomImage(s);
         if (el.getAttribute('src') !== src) el.setAttribute('src', src);
         el.alt = 'Splash';
-        el.style.setProperty('width', sizeCss(s.imageSize, s.imageSizeUnit), 'important');
-        el.style.setProperty('height', 'auto', 'important');
-        el.style.setProperty('object-fit', 'contain', 'important');
+        if (custom) {
+            // Logo ST d'origine : masqué ; le cover affiche l'image custom
+            el.setAttribute('data-sc-replaced', '1');
+            el.style.setProperty('display', 'none', 'important');
+            el.style.setProperty('opacity', '0', 'important');
+            el.style.setProperty('visibility', 'hidden', 'important');
+            el.setAttribute('aria-hidden', 'true');
+            // S'assurer qu'un cover existe dès qu'on voit un logo ST
+            coverStLogo(s);
+        } else {
+            el.style.setProperty('width', sizeCss(s.imageSize, s.imageSizeUnit), 'important');
+            el.style.setProperty('height', 'auto', 'important');
+            el.style.setProperty('max-width', 'min(90vw, ' + sizeCss(s.imageSize, s.imageSizeUnit) + ')', 'important');
+            el.style.setProperty('object-fit', 'contain', 'important');
+        }
     }
     if (el.classList && el.classList.contains('splash-message')) {
         if (s.hideText) {
@@ -286,6 +321,7 @@ function persist(s) {
     delete extension_settings[MODULE_NAME].imageUrl;
     writeCache(extension_settings[MODULE_NAME]);
     observedSettings = extension_settings[MODULE_NAME];
+    try { syncEarlyCss(extension_settings[MODULE_NAME]); } catch (e) { console.warn(LOG, 'syncEarlyCss', e); }
     try { saveSettingsDebounced(); } catch (e) { console.warn(LOG, 'saveSettingsDebounced', e); }
 }
 
@@ -635,18 +671,290 @@ function mountSettings() {
     bindUi();
 }
 
+
+/**
+ * Bloc CSS injecté dans power_user.custom_css — appliqué par ST dans
+ * applyPowerUserSettings() AVANT loadExtensionSettings(). Masque le logo ST et
+ * affiche l'image custom via ::before dès que les réglages power user sont là
+ * (plus tôt que le JS de l'extension).
+ */
+function buildEarlyCssBlock(s) {
+    if (!s || !s.enabled || !hasCustomImage(s)) return '';
+    const size = sizeCss(s.imageSize, s.imageSizeUnit);
+    const safe = String(s.imageData).replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\n/g, '');
+    const bg = s.bgColor;
+    const tc = s.textColor;
+    const hideMsg = s.hideText
+        ? '#loader.splash-screen .splash-message{display:none!important;}'
+        : `#loader.splash-screen .splash-message{color:${tc}!important;}`;
+    const hideSpin = s.hideSpinner ? '#loader.splash-screen #load-spinner{display:none!important;}' : '';
+    return `${CSS_BOOT_BEGIN}
+#preloader,#loader.splash-screen,.popup:has(#loader.splash-screen),.popup:has(#loader.splash-screen) .popup-body,.popup:has(#loader.splash-screen) .popup-content{background-color:${bg}!important;background-image:none!important;color:${tc}!important;}
+#loader.splash-screen img.splash-logo:not(#sc-boot-cover):not([data-sc-cover="1"]):not(#sc-boot-logo){opacity:0!important;visibility:hidden!important;position:absolute!important;width:0!important;height:0!important;overflow:hidden!important;}
+#loader.splash-screen::before{content:"";display:block;width:${size};max-width:min(90vw,${size});aspect-ratio:1;height:auto;min-height:${size};background-image:url("${safe}");background-size:contain;background-repeat:no-repeat;background-position:center;filter:drop-shadow(0 4px 8px rgba(0,0,0,.35));flex-shrink:0;}
+html.sc-has-image #loader.splash-screen::before{display:none!important;}
+${hideMsg}${hideSpin}
+${CSS_BOOT_END}`;
+}
+
+function stripEarlyCssBlock(css) {
+    const src = String(css || '');
+    const i = src.indexOf(CSS_BOOT_BEGIN);
+    if (i < 0) return src.trimEnd();
+    const j = src.indexOf(CSS_BOOT_END, i);
+    if (j < 0) return (src.slice(0, i) + src.slice(i + CSS_BOOT_BEGIN.length)).trimEnd();
+    return (src.slice(0, i) + src.slice(j + CSS_BOOT_END.length)).replace(/\n{3,}/g, '\n\n').trimEnd();
+}
+
+function syncEarlyCss(s) {
+    try {
+        // power_user est un export live de ST ; on le récupère sans import statique
+        // pour ne pas retarder earlyBoot.
+        const ctx = globalThis.SillyTavern?.getContext?.();
+        const pu = globalThis.power_user
+            || ctx?.powerUserSettings
+            || ctx?.powerUser
+            || null;
+        if (!pu || typeof pu !== 'object') return false;
+        const cleaned = stripEarlyCssBlock(pu.custom_css || '');
+        const block = buildEarlyCssBlock(s);
+        const next = block ? (cleaned ? `${cleaned}\n\n${block}\n` : `${block}\n`) : (cleaned ? `${cleaned}\n` : '');
+        if (pu.custom_css === next) return !!block;
+        pu.custom_css = next;
+        // Appliquer immédiatement si le <style id="custom-style"> existe déjà
+        let style = document.getElementById('custom-style');
+        if (!style && document.head) {
+            style = document.createElement('style');
+            style.id = 'custom-style';
+            document.head.appendChild(style);
+        }
+        if (style) style.textContent = next;
+        const ta = document.getElementById('customCSS');
+        if (ta && ta.value !== next) ta.value = next;
+        return !!block;
+    } catch (e) {
+        console.warn(LOG, 'syncEarlyCss', e);
+        return false;
+    }
+}
+
 // ---------------------------------------------------------------------------
-// Boot précoce (avant jQuery ready) — le splash est encore visible
+// Boot précoce — maximiser l'apply AVANT / PENDANT le splash ST
+// ST crée #loader.splash-screen + .splash-logo (src=/img/logo.png) dans
+// firstLoadInit(), puis charge les extensions plus tard. Sur iPhone le splash
+// peut disparaître avant que ce module tourne → re-show court.
 // ---------------------------------------------------------------------------
+
+function injectBootStyle(s) {
+    if (typeof document === 'undefined' || !s || !s.enabled) return;
+    let style = document.getElementById(STYLE_ID);
+    if (!style) {
+        style = document.createElement('style');
+        style.id = STYLE_ID;
+        // Le plus haut possible dans <head> pour gagner la course au paint
+        const head = document.head || document.documentElement;
+        if (head.firstChild) head.insertBefore(style, head.firstChild);
+        else head.appendChild(style);
+    }
+    const size = sizeCss(s.imageSize, s.imageSizeUnit);
+    const hasImg = hasCustomImage(s);
+    const imgRule = hasImg
+        ? `html.sc-has-image #loader.splash-screen img.splash-logo:not(#${BOOT_COVER_ID}):not([src^="data:"]) {
+    opacity: 0 !important;
+    visibility: hidden !important;
+}
+html.sc-has-image #loader.splash-screen img.splash-logo[src^="data:"],
+html.sc-has-image #${BOOT_COVER_ID},
+html.sc-has-image #sc-boot-logo {
+    opacity: 1 !important;
+    visibility: visible !important;
+}
+html.sc-has-image #${BOOT_COVER_ID} {
+    display: block !important;
+    width: var(--sc-size, ${size}) !important;
+    max-width: min(90vw, var(--sc-size, ${size})) !important;
+    height: auto !important;
+    object-fit: contain !important;
+    filter: drop-shadow(0 4px 8px rgba(0, 0, 0, 0.35));
+    margin: 0 !important;
+}`
+        : '';
+    style.textContent = `
+html.sc-active #preloader,
+html.sc-active #loader.splash-screen,
+html.sc-active .popup:has(#loader.splash-screen),
+html.sc-active .popup:has(#loader.splash-screen) .popup-body,
+html.sc-active .popup:has(#loader.splash-screen) .popup-content,
+html.sc-active #${BOOT_OVERLAY_ID} {
+    background-color: var(--sc-bg, ${s.bgColor}) !important;
+    background-image: none !important;
+    color: var(--sc-text, ${s.textColor}) !important;
+}
+html.sc-active.sc-hide-spinner #loader.splash-screen #load-spinner { display: none !important; }
+html.sc-active.sc-hide-text #loader.splash-screen .splash-message,
+html.sc-active.sc-hide-text #${BOOT_OVERLAY_ID} .splash-message { display: none !important; }
+${imgRule}
+#${BOOT_OVERLAY_ID} {
+    position: fixed !important;
+    inset: 0 !important;
+    z-index: 2147483646 !important;
+    display: flex !important;
+    flex-direction: column !important;
+    align-items: center !important;
+    justify-content: center !important;
+    gap: 4rem !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    width: 100vw !important;
+    height: 100vh !important;
+    width: 100dvw !important;
+    height: 100dvh !important;
+    pointer-events: none !important;
+}
+#${BOOT_OVERLAY_ID} .splash-message {
+    margin: 0;
+    font-size: 1.25rem;
+    font-weight: 500;
+    opacity: 0.9;
+    letter-spacing: 0.02em;
+    color: var(--sc-text, ${s.textColor}) !important;
+}
+`.replace(/\n\s+/g, '\n');
+}
+
+/** Pré-décode la data URL pour que le swap src soit immédiat (pas de frame vide). */
+function predecodeImage(s) {
+    if (!hasCustomImage(s) || typeof Image === 'undefined') return;
+    try {
+        const img = new Image();
+        img.decoding = 'sync';
+        img.src = s.imageData;
+        if (img.decode) img.decode().catch(() => {});
+    } catch { /* ignoré */ }
+}
+
+/**
+ * Couvre le logo ST d'une img custom (même parent) : même si un frame ST a déjà
+ * été peint, la couverture le masque dès le premier tick de l'extension.
+ */
+function coverStLogo(s) {
+    if (typeof document === 'undefined' || !hasCustomImage(s)) return;
+    const loader = document.querySelector('#loader.splash-screen');
+    if (!loader) return;
+    // Tous les logos ST d'origine (pas notre cover) : on les retire du flux
+    // et on swap leur src pour qu'aucune capture / paint ne montre /img/logo.png.
+    const stLogos = loader.querySelectorAll('img.splash-logo:not(#' + BOOT_COVER_ID + ')');
+    stLogos.forEach((stLogo) => {
+        if (stLogo.getAttribute('src') !== s.imageData) stLogo.setAttribute('src', s.imageData);
+        stLogo.setAttribute('data-sc-replaced', '1');
+        stLogo.style.setProperty('display', 'none', 'important');
+        stLogo.style.setProperty('opacity', '0', 'important');
+        stLogo.style.setProperty('visibility', 'hidden', 'important');
+        stLogo.setAttribute('aria-hidden', 'true');
+    });
+    let cover = document.getElementById(BOOT_COVER_ID);
+    if (!cover) {
+        cover = document.createElement('img');
+        cover.id = BOOT_COVER_ID;
+        cover.className = 'splash-logo';
+        cover.alt = 'Splash';
+        cover.setAttribute('data-sc-cover', '1');
+        const anchor = stLogos[0];
+        if (anchor && anchor.parentNode === loader) loader.insertBefore(cover, anchor);
+        else loader.insertBefore(cover, loader.firstChild);
+    }
+    if (cover.getAttribute('src') !== s.imageData) cover.setAttribute('src', s.imageData);
+    cover.style.setProperty('display', 'block', 'important');
+    cover.style.setProperty('position', 'static', 'important');
+    cover.style.setProperty('width', sizeCss(s.imageSize, s.imageSizeUnit), 'important');
+    cover.style.setProperty('height', 'auto', 'important');
+    cover.style.setProperty('max-width', 'min(90vw, ' + sizeCss(s.imageSize, s.imageSizeUnit) + ')', 'important');
+    cover.style.setProperty('object-fit', 'contain', 'important');
+    cover.style.setProperty('opacity', '1', 'important');
+    cover.style.setProperty('visibility', 'visible', 'important');
+    cover.style.removeProperty('overflow');
+}
+
+function hideBootOverlay() {
+    const el = document.getElementById(BOOT_OVERLAY_ID);
+    if (el) el.remove();
+}
+
+let bootReshowTimer = null;
+
+/**
+ * Si le splash ST est encore là : patch + cover.
+ * S'il a déjà disparu (cas iPhone) : re-show court avec l'image custom.
+ */
+function ensureCustomSplashVisible(s) {
+    if (typeof document === 'undefined' || !hasCustomImage(s)) return;
+    const live = document.querySelector('#loader.splash-screen');
+    if (live) {
+        coverStLogo(s);
+        patchSplashDom(s);
+        return;
+    }
+    // Trop tard : le splash ST est parti — re-show court pour que l'utilisateur
+    // voie SON image plutôt que rien / un flash ST déjà passé.
+    if (document.getElementById(BOOT_OVERLAY_ID) || document.getElementById(PREVIEW_ID)) return;
+    const overlay = document.createElement('div');
+    overlay.id = BOOT_OVERLAY_ID;
+    overlay.setAttribute('role', 'presentation');
+    overlay.setAttribute('aria-hidden', 'true');
+    const img = document.createElement('img');
+    img.id = 'sc-boot-logo';
+    img.className = 'splash-logo';
+    img.src = s.imageData;
+    img.alt = 'Splash';
+    overlay.appendChild(img);
+    if (!s.hideText) {
+        const msg = document.createElement('h2');
+        msg.className = 'splash-message';
+        msg.textContent = s.textLabel;
+        overlay.appendChild(msg);
+    }
+    (document.body || document.documentElement).appendChild(overlay);
+    clearTimeout(bootReshowTimer);
+    bootReshowTimer = setTimeout(() => {
+        hideBootOverlay();
+        bootReshowTimer = null;
+    }, BOOT_RESHOW_MS);
+}
+
+function scheduleRepatch(s) {
+    const run = () => {
+        try {
+            patchSplashDom(s);
+            coverStLogo(s);
+        } catch { /* ignoré */ }
+    };
+    run();
+    if (typeof queueMicrotask === 'function') queueMicrotask(run);
+    else Promise.resolve().then(run);
+    if (typeof requestAnimationFrame === 'function') {
+        requestAnimationFrame(() => {
+            run();
+            requestAnimationFrame(run);
+        });
+    }
+    // Filet de sécurité : quelques ticks au cas où ST recrée le logo
+    [16, 50, 100, 250, 500].forEach((ms) => setTimeout(run, ms));
+}
 
 (function earlyBoot() {
     try {
         if (typeof document === 'undefined') return;
         const cached = readCache();
-        if (cached && cached.enabled) {
-            applyAll(cached);
-            startObserver(cached);
-        }
+        if (!cached || !cached.enabled) return;
+        // Ordre critique : style inline → vars/classes → prédecode → observer → patch → cover/re-show
+        injectBootStyle(cached);
+        applyCssVars(cached);
+        predecodeImage(cached);
+        startObserver(cached);
+        patchSplashDom(cached);
+        coverStLogo(cached);
+        ensureCustomSplashVisible(cached);
+        scheduleRepatch(cached);
     } catch (e) {
         console.warn(LOG, 'earlyBoot', e);
     }
@@ -661,8 +969,21 @@ function init() {
         if (typeof document === 'undefined') return; // tests Node
         const s = getSettings();
         writeCache(s);
+        syncEarlyCss(s);
+        injectBootStyle(s);
         applyAll(s);
-        if (s.enabled) startObserver(s);
+        if (s.enabled) {
+            startObserver(s);
+            predecodeImage(s);
+            coverStLogo(s);
+            // Si earlyBoot a déjà posé un re-show, on ne le double pas ;
+            // sinon (cache vide au earlyBoot, settings maintenant OK) on assure.
+            ensureCustomSplashVisible(s);
+            scheduleRepatch(s);
+        } else {
+            hideBootOverlay();
+            stopObserver();
+        }
         mountSettings();
         console.log(LOG, `chargé v${VERSION}`);
     } catch (e) {
@@ -687,6 +1008,14 @@ globalThis.SplashCustom = {
     resolveImageSrc,
     sanitize,
     fileToStoredDataUrl,
+    hasCustomImage,
+    injectBootStyle,
+    coverStLogo,
+    ensureCustomSplashVisible,
+    hideBootOverlay,
+    syncEarlyCss,
+    buildEarlyCssBlock,
+    stripEarlyCssBlock,
     VERSION,
 };
 
@@ -699,11 +1028,19 @@ export const __test = {
     isImageDataUrl,
     isImageFile,
     isGifFile,
+    hasCustomImage,
+    buildEarlyCssBlock,
+    stripEarlyCssBlock,
+    CSS_BOOT_BEGIN,
+    CSS_BOOT_END,
     defaultSettings,
     FILE_ACCEPT,
     MODULE_NAME,
     CACHE_KEY,
     MAX_UPLOAD_BYTES,
     DEFAULT_LOGO,
+    BOOT_OVERLAY_ID,
+    BOOT_COVER_ID,
+    STYLE_ID,
     VERSION,
 };
