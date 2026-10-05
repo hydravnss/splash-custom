@@ -1,0 +1,117 @@
+/**
+ * Splash Custom — styles du panneau + règles précoces (variables posées par index.js).
+ * Ne touche PAS chat, form_sheld, send_textarea, ni les autres extensions.
+ */
+
+/* ---------- Panneau de réglages (FR) ---------- */
+#splash_custom_settings .sc-block { margin: 8px 0; }
+#splash_custom_settings .sc-hint { opacity: 0.75; font-size: 0.85em; margin: 2px 0 6px; line-height: 1.35; }
+#splash_custom_settings .sc-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin: 6px 0;
+    flex-wrap: wrap;
+}
+#splash_custom_settings .sc-row label { min-width: 9em; }
+#splash_custom_settings .sc-row input[type="text"],
+#splash_custom_settings .sc-row input[type="url"],
+#splash_custom_settings .sc-row input[type="number"] {
+    flex: 1 1 140px;
+    min-width: 0;
+}
+#splash_custom_settings .sc-row input[type="color"] {
+    width: 44px;
+    height: 32px;
+    padding: 0;
+    border: none;
+    background: transparent;
+    cursor: pointer;
+}
+#splash_custom_settings .sc-preview-thumb {
+    max-width: 120px;
+    max-height: 80px;
+    object-fit: contain;
+    border-radius: 8px;
+    background: #111;
+    display: none;
+}
+#splash_custom_settings .sc-preview-thumb.sc-show { display: block; }
+#splash_custom_settings .sc-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+#splash_custom_settings hr { margin: 10px 0; opacity: 0.4; }
+
+/* ---------- Splash réel (ST 1.19 : #preloader + #loader.splash-screen + .splash-logo) ---------- */
+html.sc-active #preloader {
+    background-color: var(--sc-bg, #000000) !important;
+    color: var(--sc-text, #ffffff) !important;
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+}
+
+html.sc-active .popup:has(#loader.splash-screen),
+html.sc-active .popup:has(#loader.splash-screen) .popup-body,
+html.sc-active .popup:has(#loader.splash-screen) .popup-content,
+html.sc-active #loader.splash-screen {
+    background-color: var(--sc-bg, #000000) !important;
+    background-image: none !important;
+    box-shadow: none !important;
+    border: none !important;
+    color: var(--sc-text, #ffffff) !important;
+}
+
+html.sc-active .popup:has(#loader.splash-screen)::backdrop {
+    background-color: var(--sc-bg, #000000) !important;
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+}
+
+html.sc-active #loader.splash-screen .splash-logo,
+html.sc-active #sc-preview-overlay .splash-logo {
+    width: var(--sc-size, 150px) !important;
+    max-width: min(90vw, var(--sc-size, 150px)) !important;
+    height: auto !important;
+    object-fit: contain !important;
+    filter: drop-shadow(0 4px 8px rgba(0, 0, 0, 0.35));
+}
+
+html.sc-active #loader.splash-screen .splash-message,
+html.sc-active #sc-preview-overlay .splash-message {
+    color: var(--sc-text, #ffffff) !important;
+}
+
+html.sc-active.sc-hide-text #loader.splash-screen .splash-message,
+html.sc-active.sc-hide-text #sc-preview-overlay .splash-message {
+    display: none !important;
+}
+
+html.sc-active.sc-hide-spinner #loader.splash-screen #load-spinner {
+    display: none !important;
+}
+
+/* ---------- Aperçu (réaffiche le splash 3–5 s sans recharger) ---------- */
+#sc-preview-overlay {
+    position: fixed !important;
+    inset: 0 !important;
+    z-index: 2147483000 !important;
+    display: flex !important;
+    flex-direction: column !important;
+    align-items: center !important;
+    justify-content: center !important;
+    gap: 4rem !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    width: 100vw !important;
+    height: 100vh !important;
+    width: 100dvw !important;
+    height: 100dvh !important;
+    background-color: var(--sc-bg, #000000) !important;
+    color: var(--sc-text, #ffffff) !important;
+    pointer-events: auto !important;
+}
+#sc-preview-overlay .splash-message {
+    margin: 0;
+    font-size: 1.25rem;
+    font-weight: 500;
+    opacity: 0.9;
+    letter-spacing: 0.02em;
+}

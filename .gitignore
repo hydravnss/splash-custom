@@ -1,0 +1,4 @@
+node_modules/
+test/.stubs/
+*.log
+.DS_Store
